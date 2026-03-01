@@ -22,21 +22,18 @@ from spotipy.exceptions import SpotifyException
 from spotipy.oauth2 import SpotifyClientCredentials
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from schema import ProgressTracker, safe_write_csv  # noqa: E402
+from schema import (  # noqa: E402
+    DISCOGRAPHY_COLUMNS, ProgressTracker, safe_write_csv,
+    load_env, require_env, validate_csv_input,
+)
 
+load_env()
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 CSV_PATH = ROOT / "data" / "discography.csv"
 TRACKING_PATH = ROOT / "data" / "url_search_log.json"
 CACHE_DIR = ROOT / "data" / ".spotify_cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def require_env(name: str) -> str:
-    value = os.getenv(name, "").strip()
-    if not value:
-        raise RuntimeError(f"Missing required environment variable: {name}")
-    return value
 
 
 def norm(value: str) -> str:
@@ -250,10 +247,7 @@ def persist_state(
 
 def main() -> int:
     args = parse_args()
-    with CSV_PATH.open("r", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        rows = list(reader)
-        fieldnames = reader.fieldnames or []
+    rows, fieldnames = validate_csv_input(CSV_PATH, DISCOGRAPHY_COLUMNS, min_rows=1)
     tracking = json.loads(TRACKING_PATH.read_text(encoding="utf-8"))
     entries = tracking.get("entries", [])
     entries_by_row = {int(entry.get("row_number", 0)): entry for entry in entries if entry.get("row_number")}

@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from schema import safe_write_csv  # noqa: E402
+from schema import DISCOGRAPHY_COLUMNS, safe_write_csv, validate_csv_input  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -50,10 +50,7 @@ def main() -> int:
     args = parser.parse_args()
 
     duration_by_url = load_duration_map()
-    with CSV_PATH.open("r", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        fieldnames = reader.fieldnames or []
-        rows = list(reader)
+    rows, fieldnames = validate_csv_input(CSV_PATH, DISCOGRAPHY_COLUMNS, min_rows=1)
 
     if "duration_seconds" not in fieldnames:
         fieldnames.append("duration_seconds")

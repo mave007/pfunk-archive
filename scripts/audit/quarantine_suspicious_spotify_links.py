@@ -14,7 +14,7 @@ from typing import Any
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from schema import safe_write_csv  # noqa: E402
+from schema import DISCOGRAPHY_COLUMNS, safe_write_csv, validate_csv_input  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -32,9 +32,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def load_csv() -> tuple[list[dict[str, str]], list[str]]:
-    with CSV_PATH.open("r", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        return list(reader), reader.fieldnames or []
+    return validate_csv_input(CSV_PATH, DISCOGRAPHY_COLUMNS, min_rows=1)
 
 
 def load_tracking() -> dict[str, Any]:

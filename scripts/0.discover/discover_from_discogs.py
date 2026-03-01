@@ -22,7 +22,9 @@ import sys
 import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from schema import ProgressTracker  # noqa: E402
+from schema import ProgressTracker, load_env, require_env  # noqa: E402
+
+load_env()
 
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -149,9 +151,7 @@ def run(
     force: bool,
     force_artist: str | None,
 ) -> tuple[list[dict], int, int]:
-    token = os.environ.get("DISCOGS_TOKEN")
-    if not token:
-        raise SystemExit("DISCOGS_TOKEN environment variable is required")
+    token = require_env("DISCOGS_TOKEN")
 
     seeds = load_seeds(SEEDS_PATH)
     if not seeds:

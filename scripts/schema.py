@@ -16,6 +16,36 @@ import tempfile
 import time
 from pathlib import Path
 
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+# ---------------------------------------------------------------------------
+# Environment helpers
+# ---------------------------------------------------------------------------
+
+def load_env() -> None:
+    """Load .env and .env.local from the project root (if present).
+
+    Uses python-dotenv; existing env vars are NOT overridden.
+    Safe to call multiple times.
+    """
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    for name in (".env", ".env.local"):
+        env_path = _PROJECT_ROOT / name
+        if env_path.exists():
+            load_dotenv(env_path, override=False)
+
+
+def require_env(name: str) -> str:
+    """Return an environment variable or exit with a clear error."""
+    value = os.getenv(name, "").strip()
+    if not value:
+        raise SystemExit(f"Missing required environment variable: {name}")
+    return value
+
 
 DISCOGRAPHY_COLUMNS = [
     "artist",
@@ -305,6 +335,85 @@ class ProgressTracker:
 
 
 # ---------------------------------------------------------------------------
+# Input / output guardrails
+# ---------------------------------------------------------------------------
+
+def require_file(path: Path, label: str | None = None) -> None:
+    """Verify a file exists and is non-empty, or exit with a clear message."""
+    desc = label or str(path)
+    if not path.exists():
+        raise SystemExit(f"Required file missing: {desc}")
+    if path.is_file() and path.stat().st_size == 0:
+        raise SystemExit(f"Required file is empty: {desc}")
+
+
+def validate_csv_input(
+    path: Path,
+    required_columns: list[str] | None = None,
+    *,
+    min_rows: int = 0,
+) -> tuple[list[dict[str, str]], list[str]]:
+    """Read a CSV, validate schema and row count, return (rows, fieldnames).
+
+    Raises SystemExit with diagnostics on failure.
+    """
+    require_file(path)
+    with path.open("r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        fieldnames = list(reader.fieldnames or [])
+        rows = list(reader)
+
+    if required_columns and fieldnames != required_columns:
+        missing = set(required_columns) - set(fieldnames)
+        extra = set(fieldnames) - set(required_columns)
+        parts = [f"Column mismatch in {path.name}."]
+        if missing:
+            parts.append(f"  missing: {sorted(missing)}")
+        if extra:
+            parts.append(f"  unexpected: {sorted(extra)}")
+        raise SystemExit("\n".join(parts))
+
+    if len(rows) < min_rows:
+        raise SystemExit(
+            f"{path.name} has {len(rows)} rows, expected at least {min_rows}"
+        )
+    return rows, fieldnames
+
+
+def validate_csv_output(
+    rows: list[dict[str, str]],
+    fieldnames: list[str],
+    *,
+    target_path: Path | None = None,
+    expected_columns: list[str] | None = None,
+    min_rows: int = 1,
+    max_shrink_pct: int = 10,
+) -> None:
+    """Pre-write check.  Raises SystemExit if output looks wrong."""
+    if len(rows) < min_rows:
+        raise SystemExit(
+            f"Refusing to write: only {len(rows)} rows (min {min_rows})"
+        )
+
+    if expected_columns and fieldnames != expected_columns:
+        missing = set(expected_columns) - set(fieldnames)
+        raise SystemExit(
+            f"Output column mismatch.  Missing: {sorted(missing)}"
+        )
+
+    if target_path and target_path.exists() and max_shrink_pct > 0:
+        with target_path.open("r", encoding="utf-8") as f:
+            existing_count = sum(1 for _ in f) - 1
+        if existing_count > 0:
+            shrink = (existing_count - len(rows)) / existing_count * 100
+            if shrink > max_shrink_pct:
+                raise SystemExit(
+                    f"Refusing to write: row count would shrink by {shrink:.0f}% "
+                    f"({existing_count} -> {len(rows)}, threshold {max_shrink_pct}%)"
+                )
+
+
+# ---------------------------------------------------------------------------
 # Safe file I/O helpers
 # ---------------------------------------------------------------------------
 
@@ -318,11 +427,22 @@ def safe_write_csv(
     fieldnames: list[str],
     *,
     backup: bool = True,
+    expected_columns: list[str] | None = None,
+    min_rows: int = 0,
 ) -> None:
-    """Write CSV atomically: write to temp file, optionally back up, then rename.
+    """Write CSV atomically with optional pre-write validation.
 
     Prevents partial writes from corrupting the target file.
     """
+    if expected_columns or min_rows > 0:
+        validate_csv_output(
+            rows,
+            fieldnames,
+            target_path=path,
+            expected_columns=expected_columns,
+            min_rows=min_rows,
+        )
+
     path.parent.mkdir(parents=True, exist_ok=True)
 
     if backup and path.exists():

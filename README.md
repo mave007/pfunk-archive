@@ -138,21 +138,22 @@ On-demand: Audit       scripts/audit/
 ### How to Run the Full Pipeline
 
 ```bash
-# Full pipeline (automated)
+# Full pipeline (automated, streams output live)
 python3 scripts/run_pipeline.py
 
-# Or with options:
+# Options:
 python3 scripts/run_pipeline.py --stage 0        # single stage
 python3 scripts/run_pipeline.py --skip-api        # skip API steps
 python3 scripts/run_pipeline.py --dry-run         # show plan only
+python3 scripts/run_pipeline.py --fresh           # clear enrichment checkpoints
+python3 scripts/run_pipeline.py -q                # quiet (buffered output)
 
 # Manual stage-by-stage execution:
 
-# Stage 0: Discover (requires API credentials in .env.local)
-set -a && source .env.local && set +a
+# Stage 0: Discover
 python3 scripts/0.discover/scrape_wikipedia_pfunk.py
-python3 scripts/0.discover/scrape_motherpage.py
-python3 scripts/0.discover/scrape_georgeclinton.py
+python3 scripts/0.discover/scrape_motherpage.py --max-depth 3
+python3 scripts/0.discover/scrape_georgeclinton.py --max-depth 3
 python3 scripts/0.discover/scrape_pfunk_forums.py
 python3 scripts/0.discover/discover_from_discogs.py
 python3 scripts/0.discover/discover_from_spotify.py
@@ -173,7 +174,7 @@ python3 scripts/3.reconcile/reconcile_tracking.py \
 
 # Stage 4: Enrich
 python3 scripts/4.enrich/enrich_spotify.py
-python3 scripts/4.enrich/enrich_youtube.py --limit 95
+python3 scripts/4.enrich/enrich_youtube.py --limit 95 --resume
 python3 scripts/4.enrich/enrich_personnel_from_discogs.py
 python3 scripts/4.enrich/backfill_duration_from_cache.py
 python3 scripts/4.enrich/backfill_spotify_from_cache.py
@@ -224,6 +225,10 @@ Granular options:
 - Spider: `--force-page URL` to re-fetch a specific cached page
 
 ### Environment Variables
+
+Credentials are loaded automatically from `.env` or `.env.local` at the
+project root via `python-dotenv`. No manual `export` or `source` is
+needed -- just create the file and run the pipeline.
 
 - **Spotify:** `SPOTIPY_CLIENT_ID`, `SPOTIPY_CLIENT_SECRET`
 - **YouTube:** `YOUTUBE_API_KEY`

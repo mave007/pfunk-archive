@@ -7,6 +7,8 @@ Usage:
     python3 scripts/run_pipeline.py --stage 4 --stage 5  # stages 4 and 5
     python3 scripts/run_pipeline.py --dry-run             # show plan without executing
     python3 scripts/run_pipeline.py --skip-api            # skip stages that need API keys
+    python3 scripts/run_pipeline.py --fresh               # clear enrichment checkpoints
+    python3 scripts/run_pipeline.py -q                    # quiet mode (buffer output)
 """
 
 from __future__ import annotations
@@ -15,18 +17,35 @@ import argparse
 import os
 import subprocess
 import sys
+import threading
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from schema import verify_integrity, save_integrity  # noqa: E402
+from schema import verify_integrity, save_integrity, load_env  # noqa: E402
+
+load_env()
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
 REPORTS = ROOT / "reports"
 DISCOGRAPHY = ROOT / "data" / "discography.csv"
+
+_ENV_VARS = ["SPOTIPY_CLIENT_ID", "SPOTIPY_CLIENT_SECRET", "YOUTUBE_API_KEY", "DISCOGS_TOKEN"]
+
+CHECKPOINT_FILES = [
+    ROOT / "data" / ".youtube_enrich_checkpoint.json",
+    ROOT / "data" / ".enrich_spotify_checkpoint.json",
+]
+
+_print_lock = threading.Lock()
+
+
+def _locked_print(msg: str) -> None:
+    with _print_lock:
+        print(msg, flush=True)
 
 
 @dataclass
@@ -81,8 +100,9 @@ STAGE_3 = [
 STAGE_4_PARALLEL = [
     Step("enrich_spotify", ["python3", str(SCRIPTS / "4.enrich/enrich_spotify.py")], 4,
          requires_api=True, required_files=["data/discography.csv"]),
-    Step("enrich_youtube", ["python3", str(SCRIPTS / "4.enrich/enrich_youtube.py"), "--limit", "95"], 4,
-         requires_api=True, required_files=["data/discography.csv"]),
+    Step("enrich_youtube", [
+        "python3", str(SCRIPTS / "4.enrich/enrich_youtube.py"), "--limit", "95", "--resume",
+    ], 4, requires_api=True, required_files=["data/discography.csv"]),
     Step("enrich_personnel", ["python3", str(SCRIPTS / "4.enrich/enrich_personnel_from_discogs.py")], 4,
          requires_api=True),
 ]
@@ -114,17 +134,74 @@ STAGE_5_VALIDATORS = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Env banner
+# ---------------------------------------------------------------------------
+
+def print_env_banner() -> None:
+    print("\n  Environment variables:")
+    for var in _ENV_VARS:
+        val = os.environ.get(var, "")
+        if val:
+            masked = val[:4] + "..." + val[-3:] if len(val) > 10 else "***"
+            print(f"    {var} = {masked}")
+        else:
+            print(f"    {var} = (NOT SET)")
+    print()
+
+
+# ---------------------------------------------------------------------------
+# Preconditions
+# ---------------------------------------------------------------------------
+
 def check_preconditions(step: Step) -> str | None:
     """Return an error message if preconditions fail, None if OK."""
     for rel_path in step.required_files:
         full_path = ROOT / rel_path
         if not full_path.exists():
             return f"required file missing: {rel_path}"
+        if full_path.is_file() and full_path.stat().st_size == 0:
+            return f"required file is empty: {rel_path}"
     return None
 
 
-def run_step(step: Step) -> tuple[str, int, float, str]:
-    """Run a step and return (name, exit_code, elapsed_seconds, output)."""
+# ---------------------------------------------------------------------------
+# Step runners
+# ---------------------------------------------------------------------------
+
+def run_step_streaming(step: Step) -> tuple[str, int, float, str]:
+    """Run a step, streaming output line-by-line with [name] prefix."""
+    prefix = f"  [{step.name}]"
+    _locked_print(f"{prefix} starting...")
+    start = time.time()
+    collected: list[str] = []
+    try:
+        proc = subprocess.Popen(
+            step.command,
+            cwd=str(ROOT),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        assert proc.stdout is not None
+        for raw_line in proc.stdout:
+            line = raw_line.rstrip("\n")
+            _locked_print(f"{prefix} {line}")
+            collected.append(line)
+        proc.wait(timeout=600)
+        elapsed = time.time() - start
+        return step.name, proc.returncode, elapsed, "\n".join(collected).strip()
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        elapsed = time.time() - start
+        return step.name, -1, elapsed, "TIMEOUT after 600s"
+    except Exception as exc:
+        elapsed = time.time() - start
+        return step.name, -1, elapsed, str(exc)
+
+
+def run_step_quiet(step: Step) -> tuple[str, int, float, str]:
+    """Run a step with buffered output (quiet mode)."""
     start = time.time()
     try:
         result = subprocess.run(
@@ -145,23 +222,25 @@ def run_step(step: Step) -> tuple[str, int, float, str]:
         return step.name, -1, elapsed, str(exc)
 
 
-def run_parallel(steps: list[Step], skip_api: bool) -> list[tuple[str, int, float, str]]:
+def run_parallel(steps: list[Step], skip_api: bool, verbose: bool) -> list[tuple[str, int, float, str]]:
     """Run steps in parallel, skipping API steps if requested."""
+    runner = run_step_streaming if verbose else run_step_quiet
     filtered = [s for s in steps if not (skip_api and s.requires_api)]
     if not filtered:
         return []
 
-    results = []
-    with ProcessPoolExecutor(max_workers=min(len(filtered), 6)) as executor:
-        futures = {executor.submit(run_step, s): s for s in filtered}
+    results: list[tuple[str, int, float, str]] = []
+    with ThreadPoolExecutor(max_workers=min(len(filtered), 6)) as executor:
+        futures = {executor.submit(runner, s): s for s in filtered}
         for future in as_completed(futures):
             results.append(future.result())
     return results
 
 
-def run_sequential(steps: list[Step], skip_api: bool) -> list[tuple[str, int, float, str]]:
+def run_sequential(steps: list[Step], skip_api: bool, verbose: bool) -> list[tuple[str, int, float, str]]:
     """Run steps sequentially, skipping API steps if requested."""
-    results = []
+    runner = run_step_streaming if verbose else run_step_quiet
+    results: list[tuple[str, int, float, str]] = []
     for step in steps:
         if skip_api and step.requires_api:
             continue
@@ -169,11 +248,15 @@ def run_sequential(steps: list[Step], skip_api: bool) -> list[tuple[str, int, fl
         if err:
             results.append((step.name, -1, 0.0, f"SKIPPED: {err}"))
             continue
-        results.append(run_step(step))
+        results.append(runner(step))
     return results
 
 
-def print_results(label: str, results: list[tuple[str, int, float, str]]) -> bool:
+# ---------------------------------------------------------------------------
+# Results printing
+# ---------------------------------------------------------------------------
+
+def print_results(label: str, results: list[tuple[str, int, float, str]], verbose: bool) -> bool:
     """Print results and return True if all passed."""
     if not results:
         return True
@@ -186,17 +269,25 @@ def print_results(label: str, results: list[tuple[str, int, float, str]]) -> boo
         if code != 0:
             all_ok = False
         print(f"  [{status}] {name} ({elapsed:.1f}s)")
-        if code != 0 and output:
+        if code != 0 and output and not verbose:
             for line in output.split("\n")[:5]:
                 print(f"         {line}")
     return all_ok
 
+
+# ---------------------------------------------------------------------------
+# CLI and main
+# ---------------------------------------------------------------------------
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run P-Funk Archive pipeline")
     parser.add_argument("--stage", type=int, action="append", help="Run specific stage(s) only")
     parser.add_argument("--dry-run", action="store_true", help="Show plan without executing")
     parser.add_argument("--skip-api", action="store_true", help="Skip steps requiring API keys")
+    parser.add_argument("--fresh", action="store_true",
+                        help="Clear enrichment checkpoints before running")
+    parser.add_argument("-q", "--quiet", action="store_true",
+                        help="Buffer output instead of streaming (old behavior)")
     return parser.parse_args()
 
 
@@ -207,8 +298,17 @@ def should_run(stage: int, requested: list[int] | None) -> bool:
 def main() -> int:
     args = parse_args()
     requested = args.stage
+    verbose = not args.quiet
     total_start = time.time()
     all_ok = True
+
+    print_env_banner()
+
+    if args.fresh:
+        for cp in CHECKPOINT_FILES:
+            if cp.exists():
+                cp.unlink()
+                print(f"  Removed checkpoint: {cp.name}")
 
     stages = [
         (0, "Stage 0: Discovery (scrapers)", STAGE_0_SCRAPERS, True),
@@ -244,10 +344,10 @@ def main() -> int:
         if not should_run(stage_num, requested):
             continue
         if parallel:
-            results = run_parallel(steps, args.skip_api)
+            results = run_parallel(steps, args.skip_api, verbose)
         else:
-            results = run_sequential(steps, args.skip_api)
-        stage_ok = print_results(label, results)
+            results = run_sequential(steps, args.skip_api, verbose)
+        stage_ok = print_results(label, results, verbose)
         if not stage_ok:
             all_ok = False
             if stage_num < 5:

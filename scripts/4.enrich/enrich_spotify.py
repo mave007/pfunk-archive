@@ -20,8 +20,12 @@ from spotipy.exceptions import SpotifyException
 from spotipy.oauth2 import SpotifyClientCredentials
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from schema import ProgressTracker, safe_write_csv  # noqa: E402
+from schema import (  # noqa: E402
+    DISCOGRAPHY_COLUMNS, ProgressTracker, safe_write_csv,
+    load_env, require_env, validate_csv_input,
+)
 
+load_env()
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 CSV_PATH = ROOT / "data" / "discography.csv"
@@ -30,13 +34,6 @@ CACHE_DIR = ROOT / "data" / ".spotify_cache"
 CHECKPOINT_PATH = ROOT / "data" / ".enrich_spotify_checkpoint.json"
 
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def require_env(name: str) -> str:
-    value = os.getenv(name, "").strip()
-    if not value:
-        raise RuntimeError(f"Missing required environment variable: {name}")
-    return value
 
 
 def cache_key(namespace: str, query: str) -> str:
@@ -139,13 +136,11 @@ class SpotifyEnricher:
 
 
 def load_rows() -> tuple[list[dict[str, str]], list[str]]:
-    with CSV_PATH.open("r", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        return list(reader), reader.fieldnames or []
+    return validate_csv_input(CSV_PATH, DISCOGRAPHY_COLUMNS, min_rows=1)
 
 
 def save_rows(rows: list[dict[str, str]], fieldnames: list[str]) -> None:
-    safe_write_csv(CSV_PATH, rows, fieldnames)
+    safe_write_csv(CSV_PATH, rows, fieldnames, expected_columns=DISCOGRAPHY_COLUMNS)
 
 
 def load_checkpoint() -> dict[str, Any]:

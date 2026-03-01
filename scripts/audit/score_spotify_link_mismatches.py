@@ -18,21 +18,18 @@ import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from schema import ProgressTracker  # noqa: E402
+from schema import (  # noqa: E402
+    DISCOGRAPHY_COLUMNS, ProgressTracker,
+    load_env, require_env, validate_csv_input,
+)
 
+load_env()
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 CSV_PATH = ROOT / "data" / "discography.csv"
 CACHE_DIR = ROOT / "data" / ".spotify_cache"
 TRACK_META_CACHE = CACHE_DIR / "url_meta_tracks.json"
 ALBUM_META_CACHE = CACHE_DIR / "url_meta_albums.json"
-
-
-def require_env(name: str) -> str:
-    value = os.getenv(name, "").strip()
-    if not value:
-        raise RuntimeError(f"Missing required environment variable: {name}")
-    return value
 
 
 def norm(value: str) -> str:
@@ -309,7 +306,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    rows = list(csv.DictReader(CSV_PATH.open("r", encoding="utf-8")))
+    rows, _ = validate_csv_input(CSV_PATH, DISCOGRAPHY_COLUMNS, min_rows=1)
 
     links: list[tuple[int, dict[str, str], str, str]] = []
     track_ids: set[str] = set()

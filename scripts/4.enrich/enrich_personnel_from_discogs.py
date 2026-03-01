@@ -17,7 +17,9 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from schema import ProgressTracker  # noqa: E402
+from schema import ProgressTracker, load_env, require_env  # noqa: E402
+
+load_env()
 
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -233,10 +235,7 @@ def load_unique_releases() -> list[dict[str, str]]:
 
 
 def main() -> int:
-    token = os.getenv("DISCOGS_TOKEN", "").strip()
-    if not token:
-        print("Missing DISCOGS_TOKEN environment variable")
-        return 1
+    token = require_env("DISCOGS_TOKEN")
 
     releases = load_unique_releases()
     all_personnel: list[dict[str, str]] = []

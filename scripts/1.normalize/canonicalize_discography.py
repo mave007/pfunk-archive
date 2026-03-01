@@ -22,6 +22,7 @@ from schema import (  # noqa: E402
     infer_version_type,
     dedupe_key,
     safe_write_csv,
+    validate_csv_input,
 )
 
 
@@ -301,14 +302,12 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    with CSV_PATH.open("r", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        fieldnames = ensure_columns(reader.fieldnames or EXPECTED_COLUMNS)
-        rows = list(reader)
+    rows, raw_fieldnames = validate_csv_input(CSV_PATH, min_rows=1)
+    fieldnames = ensure_columns(raw_fieldnames)
 
     updated_rows, metrics = normalize_and_dedupe(rows)
     if args.write:
-        safe_write_csv(CSV_PATH, updated_rows, fieldnames)
+        safe_write_csv(CSV_PATH, updated_rows, fieldnames, expected_columns=EXPECTED_COLUMNS)
     write_report(args.report_json, args.report_md, metrics)
 
     print(f"rows_before={metrics['rows_before']}")

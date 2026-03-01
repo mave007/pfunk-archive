@@ -9,10 +9,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from schema import (  # noqa: E402
+    DISCOGRAPHY_COLUMNS,
     slug_hash,
     clean_title,
     base_work_title,
     infer_version_type,
+    validate_csv_input,
 )
 
 
@@ -25,8 +27,8 @@ TRACKS_OUT = ROOT / "data" / "catalog_tracks.csv"
 
 
 def load_rows() -> list[dict[str, str]]:
-    with DISCOGRAPHY.open("r", encoding="utf-8") as handle:
-        return list(csv.DictReader(handle))
+    rows, _ = validate_csv_input(DISCOGRAPHY, DISCOGRAPHY_COLUMNS, min_rows=1)
+    return rows
 
 
 def write_csv(path: Path, fieldnames: list[str], rows: list[dict[str, str]]) -> None:

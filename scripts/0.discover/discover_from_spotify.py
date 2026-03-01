@@ -25,7 +25,9 @@ from spotipy.exceptions import SpotifyException
 from spotipy.oauth2 import SpotifyClientCredentials
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from schema import ProgressTracker  # noqa: E402
+from schema import ProgressTracker, load_env, require_env  # noqa: E402
+
+load_env()
 
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -175,10 +177,8 @@ def run(
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-    client_id = os.getenv("SPOTIPY_CLIENT_ID", "").strip()
-    client_secret = os.getenv("SPOTIPY_CLIENT_SECRET", "").strip()
-    if not client_id or not client_secret:
-        raise RuntimeError("Set SPOTIPY_CLIENT_ID and SPOTIPY_CLIENT_SECRET")
+    client_id = require_env("SPOTIPY_CLIENT_ID")
+    client_secret = require_env("SPOTIPY_CLIENT_SECRET")
 
     spotify = spotipy.Spotify(
         auth_manager=SpotifyClientCredentials(
