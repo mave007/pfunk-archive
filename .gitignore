@@ -1,0 +1,51 @@
+# P-Funk Archive .gitignore
+
+# ----- OS / Editor -----
+.cache*
+.DS_Store
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# ----- Secrets -----
+.env
+.env.local
+
+# ----- Python -----
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+venv/
+env/
+node_modules/
+
+# ----- API caches (large, local-only) -----
+data/.*_cache/
+
+# ----- Discovery intermediary files -----
+data/discovery_raw/
+data/discovery_candidates.csv
+data/discovery_log.json
+
+# ----- Data intermediary files -----
+data/discography_*.csv
+data/*_checkpoint.json
+data/.*_checkpoint.json
+data/*.tmp
+data/*.bak
+data/*.pre_pipeline_backup
+data/.enrich_sidecars/
+data/.integrity.json
+data/.checkpoint_*
+
+# ----- Generated reports -----
+reports/
